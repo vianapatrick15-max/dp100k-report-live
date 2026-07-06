@@ -386,6 +386,7 @@ def render_top_ad_card_4w(r, rank):
     code = r['ad_code']
     spend = fmt_money(r['spend_4w'])
     cpa_s = fmt_money(r['cpa_real']) if r['cpa_real'] is not None else '—'
+    conv_s = fmt_pct1(r['vendas_hubla'] / r['lpv_4w'] * 100) if r.get('lpv_4w') else '—'
     cpa_meta = TOP_CRITERIA['cpa_alvo_ref']
     cpa_cls = ''
     if r['cpa_real']:
@@ -417,6 +418,7 @@ def render_top_ad_card_4w(r, rank):
             <div class="stat"><div class="l">MQL</div><div class="v">{mql_html}</div></div>
             <div class="stat"><div class="l">Spend</div><div class="v">{spend}</div></div>
             <div class="stat"><div class="l">CTR link</div><div class="v">{fmt_pct(r.get("link_ctr",0))}</div></div>
+            <div class="stat" title="Vendas Hubla ÷ visitas na LP"><div class="l">Conv. visita→venda</div><div class="v">{conv_s}</div></div>
         </div>
         <div class="subscores">
             <div class="ss"><span class="ssl">Vendas</span><div class="ssbar"><div class="ssfill" style="width:{r["score_vendas"]:.0f}%;background:#10b981"></div></div><span class="ssv">{r["score_vendas"]:.0f}</span></div>
@@ -442,6 +444,7 @@ for i, r in enumerate(TOP_RANKING, 1):
         f'<tr class="{cls}"><td><b>#{i}</b></td><td><b>{r["ad_code"]}</b></td>'
         f'<td>{r["name"][:55]}</td>'
         f'<td>{r["vendas_hubla"]}</td>'
+        f'<td>{fmt_pct1(r["vendas_hubla"] / r["lpv_4w"] * 100) if r.get("lpv_4w") else "—"}</td>'
         f'<td>{fmt_cpa(r["cpa_real"])}</td>'
         f'<td>{r["mql_count"]} <span class="muted-pct">/ {r["pesquisa_total"]}</span></td>'
         f'<td>{fmt_money(r["spend_4w"])}</td>'
@@ -1302,7 +1305,7 @@ Julho Sem 1 fechou com <b>{S4['hubla_total']} vendas Hubla</b> ({delta_html(S3['
 <h3>Ranking completo ({len(TOP_RANKING)} elegíveis)</h3>
 <p class="muted">Tabela com todos os ads que passaram o filtro de elegibilidade, ordenados por score total. Sub-scores na última coluna mostram a contribuição de cada critério.</p>
 <table>
-<thead><tr><th>#</th><th>Cód.</th><th>Nome</th><th>Vendas Hubla</th><th>CPA real</th><th>MQL</th><th>Spend</th><th>CTR link</th><th>Score</th><th>V · MQL · CPA</th></tr></thead>
+<thead><tr><th>#</th><th>Cód.</th><th>Nome</th><th>Vendas Hubla</th><th>Conv. visita→venda</th><th>CPA real</th><th>MQL</th><th>Spend</th><th>CTR link</th><th>Score</th><th>V · MQL · CPA</th></tr></thead>
 <tbody>{ranking_table_rows}</tbody>
 </table>
 </section>
