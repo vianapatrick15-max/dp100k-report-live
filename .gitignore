@@ -1,0 +1,7 @@
+_build_data.json
+__pycache__/
+*.pyc
+.env
+sa.json
+*.sa.json
+.DS_Store

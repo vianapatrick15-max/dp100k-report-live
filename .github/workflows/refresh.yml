@@ -1,0 +1,51 @@
+name: Refresh DP100K Report LIVE
+
+on:
+  schedule:
+    - cron: '20 9 * * *'   # 06:20 BRT (09:20 UTC) — 1x/dia
+  workflow_dispatch:
+
+concurrency:
+  group: dp100k-report-live
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Write service account credentials
+        env:
+          SA_B64: ${{ secrets.GCP_SA_B64 }}
+        run: |
+          echo "$SA_B64" | base64 -d > "$RUNNER_TEMP/sa.json"
+          python3 -c "import json,os; json.load(open(os.environ['RUNNER_TEMP']+'/sa.json'))" && echo "SA JSON OK"
+          echo "GOOGLE_SHEETS_CREDENTIALS_PATH=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+
+      - name: Build report
+        env:
+          META_ADS_TOKEN: ${{ secrets.META_ADS_TOKEN }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+        run: python run.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet index.html; then
+            echo "sem mudancas no index.html"
+          else
+            git add index.html
+            git commit -m "refresh: $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
