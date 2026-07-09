@@ -19,16 +19,18 @@ TAB_INVEST   = "Investimento por Hora"   # KPIs por turma (spend/vendas/impr/cli
 TAB_HUBLA    = "Dados_venda_Hubla"        # vendas reais (venda canonica)
 TAB_PESQUISA = "Pesquisa"                 # persona + renda (MQL)
 
-# Colunas da aba Investimento por Hora (posicionais, header fixo)
-INV_COL_TURMA  = 0
-INV_COL_CHAVE  = 1
-INV_COL_DATA   = 2
-INV_COL_INVEST = 4
-INV_COL_VENDAS = 5
-INV_COL_IC     = 6
-INV_COL_VISITAS= 8
-INV_COL_IMPR   = 9
-INV_COL_CLICKS = 10
+# Colunas da aba Investimento por Hora (posicionais).
+# Coluna "Mês" inserida no inicio (jul/26) -> todos os indices deslocados +1.
+# Header atual: Mês | TURMA | CHAVE | DATA | HORA | INVESTIDO | VENDAS | IC | CTR | VISITAS | IMPRESSÕES | CLICKS
+INV_COL_TURMA  = 1
+INV_COL_CHAVE  = 2
+INV_COL_DATA   = 3
+INV_COL_INVEST = 5
+INV_COL_VENDAS = 6
+INV_COL_IC     = 7
+INV_COL_VISITAS= 9
+INV_COL_IMPR   = 10
+INV_COL_CLICKS = 11
 
 # Janela de turmas na tabela de tendencia
 N_TURMAS = 4
