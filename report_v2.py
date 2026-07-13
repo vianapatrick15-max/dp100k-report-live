@@ -27,6 +27,11 @@ from gauth import get_gspread_client, init_meta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AD_RE = re.compile(r'AD-(\d+)', re.I)
+
+# Planilha de trafego (granular por ad) — tem Instagram Permalink URL + Preview
+# Shareable Link por anuncio; fonte canonica pra "ver a midia".
+TRAFFIC_SHEET_ID = '1R2MdILmwPZKwBqFpmT5i6VEaiaHYtpwtwCI4F7HLKQo'
+TRAFFIC_TAB = 'Página1'
 FUNIS = ['prosp', 'quiz', 'rmkt']
 FUNIL_LABEL = {'prosp': 'Prospeccao', 'quiz': 'Quiz', 'rmkt': 'RMKT'}
 
@@ -232,11 +237,46 @@ def meta_pull_window(acct, since, until):
 # 3) THUMBS + status (deduplicado por ad_id, so os que vao aparecer)
 # --------------------------------------------------------------------------
 
+def _embed_thumbs_sized(thumb_urls, maxpx=420, quality=78):
+    """Baixa thumbs, redimensiona (max maxpx) e devolve data-URIs base64.
+    Menor que o _embed_thumbs compartilhado (520px) — sao muitos ads; a midia em
+    resolucao real vem pelo link do post (IG/FB)."""
+    import io
+    import base64
+    import urllib.request
+    try:
+        from PIL import Image
+    except Exception:
+        return {}
+    out, ok, tot = {}, 0, 0
+    for aid, url in thumb_urls.items():
+        if not url:
+            out[aid] = ''
+            continue
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            raw = urllib.request.urlopen(req, timeout=30).read()
+            im = Image.open(io.BytesIO(raw)).convert('RGB')
+            w, h = im.size
+            if max(w, h) > maxpx:
+                sc = maxpx / max(w, h)
+                im = im.resize((int(w * sc), int(h * sc)), Image.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, format='JPEG', quality=quality, optimize=True)
+            b = buf.getvalue()
+            out[aid] = 'data:image/jpeg;base64,' + base64.b64encode(b).decode()
+            ok += 1
+            tot += len(b)
+        except Exception:
+            out[aid] = ''
+    print(f"[thumb] embutidas {ok}/{len(thumb_urls)} (~{tot/1024/1024:.1f} MB)", file=sys.stderr)
+    return out
+
+
 def fetch_thumbs_and_status(ad_ids):
     from facebook_business.adobjects.ad import Ad
     from facebook_business.adobjects.adcreative import AdCreative
-    import meta_data as MD
-    thumb_urls, status = {}, {}
+    thumb_urls, status, meta_media = {}, {}, {}
     for i, aid in enumerate(ad_ids):
         try:
             info = Ad(aid).api_get(fields=['effective_status'])
@@ -248,18 +288,71 @@ def fetch_thumbs_and_status(ad_ids):
             cr_id = ad_obj.get('creative', {}).get('id') if ad_obj.get('creative') else None
             if cr_id:
                 cr = AdCreative(cr_id).api_get(
-                    fields=['thumbnail_url', 'image_url'],
+                    fields=['thumbnail_url', 'image_url', 'instagram_permalink_url',
+                            'effective_object_story_id'],
                     params={'thumbnail_width': 640, 'thumbnail_height': 640})
                 d = dict(cr)
                 thumb_urls[aid] = d.get('image_url') or d.get('thumbnail_url') or ''
+                fb = ''
+                osid = d.get('effective_object_story_id') or ''
+                if osid and '_' in osid:
+                    pid, post = osid.split('_', 1)
+                    fb = f"https://www.facebook.com/{pid}/posts/{post}"
+                meta_media[aid] = {'ig': d.get('instagram_permalink_url') or '', 'fb': fb}
             else:
                 thumb_urls[aid] = ''
+                meta_media[aid] = {'ig': '', 'fb': ''}
         except Exception:
             thumb_urls[aid] = ''
+            meta_media[aid] = {'ig': '', 'fb': ''}
         if (i + 1) % 10 == 0:
             print(f"[thumb] {i+1}/{len(ad_ids)}", file=sys.stderr)
-    thumbs_b64 = MD._embed_thumbs(thumb_urls)
-    return thumbs_b64, status
+    thumbs_b64 = _embed_thumbs_sized(thumb_urls)
+    return thumbs_b64, status, meta_media
+
+
+def load_traffic_media(client):
+    """Le a planilha de trafego -> {AD-XX: {ig, fb}} (link mais recente nao-vazio).
+    Fonte canonica pra 'ver a midia': Instagram Permalink URL + Preview Shareable Link."""
+    try:
+        sh = client.open_by_key(TRAFFIC_SHEET_ID)
+        ws = sh.worksheet(TRAFFIC_TAB)
+        rows = ws.get_all_values()
+    except Exception as e:
+        print(f"[traffic] ERR: {str(e)[:120]}", file=sys.stderr)
+        return {}
+    if not rows:
+        return {}
+    hdr = rows[0]
+
+    def col(*needles):
+        for i, h in enumerate(hdr):
+            hl = (h or '').lower()
+            if all(n in hl for n in needles):
+                return i
+        return None
+    c_ad = col('ad', 'name')
+    c_ig = col('instagram', 'permalink')
+    c_fb = col('preview', 'shareable')
+    c_date = col('date')
+    out = {}
+    # ordena por data pra pegar o link mais recente por ad
+    body = rows[1:]
+    if c_date is not None:
+        body = sorted(body, key=lambda r: (r[c_date] if len(r) > c_date else ''))
+    for r in body:
+        code = ad_code(r[c_ad] if c_ad is not None and len(r) > c_ad else '')
+        if not code:
+            continue
+        ig = (r[c_ig] if c_ig is not None and len(r) > c_ig else '') or ''
+        fb = (r[c_fb] if c_fb is not None and len(r) > c_fb else '') or ''
+        cur = out.setdefault(code, {'ig': '', 'fb': ''})
+        if ig.strip():
+            cur['ig'] = ig.strip()
+        if fb.strip():
+            cur['fb'] = fb.strip()
+    print(f"[traffic] links de midia: {len(out)} ads", file=sys.stderr)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -367,9 +460,9 @@ def main():
                 purch_pixel=B['purch'],
                 ad_id=sorted(B['ad_ids'])[0] if B['ad_ids'] else None))
         top_ads.sort(key=lambda x: -x['spend'])
-        # marca top ads por spend p/ buscar thumb (alinhado ao que a tabela mostra)
-        for a in top_ads[:12]:
-            if a['ad_id']:
+        # marca TODOS os ads com investimento p/ buscar thumb (tabela mostra todos)
+        for a in top_ads:
+            if a['ad_id'] and a['spend'] >= 1:
                 global_top_ad_ids.add(a['ad_id'])
 
         # KPIs canonicos da turma
@@ -394,11 +487,26 @@ def main():
             kpi=kpi, funnels=funnels, top_ads=top_ads,
             _meta_total_spend=round(meta_total_spend, 2), _scale=round(scale, 4)))
 
-    # thumbs + status (dedupe global)
+    # thumbs + status (dedupe global) + links de midia
     print(f"[v2] 3/4 thumbs+status de {len(global_top_ad_ids)} ads unicos...", file=sys.stderr)
-    thumbs_b64, status = ({}, {})
+    thumbs_b64, status, meta_media = ({}, {}, {})
     if global_top_ad_ids:
-        thumbs_b64, status = fetch_thumbs_and_status(sorted(global_top_ad_ids))
+        thumbs_b64, status, meta_media = fetch_thumbs_and_status(sorted(global_top_ad_ids))
+    # links de midia: planilha de trafego (IG real + preview fb.me, por AD-XX) tem
+    # prioridade; Meta API (FB post) como fallback -> todo ad fica com "ver midia".
+    code_media = load_traffic_media(get_gspread_client())
+    media = {}
+    for t in turmas_out:
+        for a in t['top_ads']:
+            aid = a['ad_id']
+            if not aid:
+                continue
+            mm = meta_media.get(aid, {'ig': '', 'fb': ''})
+            sm = code_media.get(a['code'] or '', {'ig': '', 'fb': ''})
+            ig = sm.get('ig') or mm.get('ig') or ''
+            fb = sm.get('fb') or mm.get('fb') or ''
+            if ig or fb:
+                media[aid] = {'ig': ig, 'fb': fb}
 
     # overview do mes
     print("[v2] 4/4 visao geral + acoes...", file=sys.stderr)
@@ -408,7 +516,7 @@ def main():
         account=C.ACCOUNT, updated_at=now_brt(),
         month_label=cur_mes_prefix, cur_label=cur_label,
         turmas=turmas_out, overview=overview,
-        thumbs_b64=thumbs_b64, ad_status=status)
+        thumbs_b64=thumbs_b64, ad_status=status, media_links=media)
 
     out = os.path.join(HERE, 'data_v2.json')
     with open(out, 'w', encoding='utf-8') as f:

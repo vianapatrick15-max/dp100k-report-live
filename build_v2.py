@@ -94,31 +94,34 @@ def funnel_card(b, spend_ref):
 
 
 # ---------------------------------------------------------------- top ads table
-def ads_table(top_ads, thumbs, status, limit=12):
+def ads_table(top_ads, status):
     rows = []
-    for a in top_ads[:limit]:
+    shown = 0
+    for a in top_ads:
         if a['spend'] < 1:
             continue
-        thumb = thumbs.get(a['ad_id'] or '', '')
-        img = (f'<img src="{thumb}" class="thumb">' if thumb
-               else '<div class="thumb noimg"></div>')
-        st = status.get(a['ad_id'] or '', '')
+        shown += 1
+        aid = a['ad_id'] or ''
+        st = status.get(aid, '')
         stdot = 'on' if st == 'ACTIVE' else 'off'
         color = FUN_COLOR.get(a['funnel'], '#888')
         cpac = cls_cpa(a['cpa_real']) if a['vendas_hubla'] else ''
         mqlc = cls_mql(a['mql_pct']) if a['matched'] else ''
+        cpa_v = a['cpa_real'] if a['vendas_hubla'] else 10 ** 9
+        mql_v = a['mql_pct'] if a['matched'] else -1
         rows.append(f'''
         <tr data-funnel="{a['funnel']}">
-          <td class="adcell">{img}
+          <td class="adcell">
+            <img class="thumb" data-aid="{esc(aid)}" alt="">
             <div><span class="adcode">{esc(a['code'] or a['name'][:16])}</span>
               <span class="fchip" style="background:{color}22;color:{color}">{FUN_LABEL[a['funnel']]}</span>
               <span class="stdot {stdot}" title="{esc(st)}"></span>
               <div class="adname">{esc((a['name'] or '')[:52])}</div></div></td>
-          <td class="r">{brl(a['spend'])}</td>
-          <td class="r">{num(a['vendas_hubla'])}</td>
-          <td class="r c-{cpac}">{brl(a['cpa_real']) if a['vendas_hubla'] else '-'}</td>
-          <td class="r c-{mqlc}">{pct(a['mql_pct'],0) if a['matched'] else '-'}<span class="muted"> {a['mql']}/{a['matched']}</span></td>
-          <td class="r">{pct(a['link_ctr'],2)}</td>
+          <td class="r" data-v="{a['spend']}">{brl(a['spend'])}</td>
+          <td class="r" data-v="{a['vendas_hubla']}">{num(a['vendas_hubla'])}</td>
+          <td class="r c-{cpac}" data-v="{cpa_v}">{brl(a['cpa_real']) if a['vendas_hubla'] else '-'}</td>
+          <td class="r c-{mqlc}" data-v="{mql_v}">{pct(a['mql_pct'],0) if a['matched'] else '-'}<span class="muted"> {a['mql']}/{a['matched']}</span></td>
+          <td class="r" data-v="{a['link_ctr']}">{pct(a['link_ctr'],2)}</td>
         </tr>''')
     return f'''
     <div class="afilter">
@@ -127,10 +130,15 @@ def ads_table(top_ads, thumbs, status, limit=12):
       <button class="fbtn" data-f="prosp">Prospeccao</button>
       <button class="fbtn" data-f="quiz">Quiz</button>
       <button class="fbtn" data-f="rmkt">RMKT</button>
+      <span class="acount">{shown} anuncios · clique no cabecalho p/ ordenar · clique na midia p/ ampliar</span>
     </div>
     <div class="tblwrap"><table class="ads">
-      <thead><tr><th>Anuncio</th><th class="r">Investido</th><th class="r">Vendas Hubla</th>
-        <th class="r">CPA real</th><th class="r">MQL</th><th class="r">CTR link</th></tr></thead>
+      <thead><tr><th>Anuncio</th>
+        <th class="r sortable" data-col="1">Investido<i></i></th>
+        <th class="r sortable" data-col="2">Vendas Hubla<i></i></th>
+        <th class="r sortable" data-col="3">CPA real<i></i></th>
+        <th class="r sortable" data-col="4">MQL<i></i></th>
+        <th class="r sortable" data-col="5">CTR link<i></i></th></tr></thead>
       <tbody>{''.join(rows)}</tbody>
     </table></div>'''
 
@@ -153,7 +161,7 @@ def funnel_steps(kpi):
 
 
 # ---------------------------------------------------------------- turma panel
-def turma_panel(t, thumbs, status, idx):
+def turma_panel(t, status, idx):
     k = t['kpi']
     partial = ' <span class="badge-live">turma aberta (parcial)</span>' if t['is_current'] else ''
     tiles = [
@@ -174,7 +182,7 @@ def turma_panel(t, thumbs, status, idx):
       <h3>Blocos isolados <span class="hnote">Prospeccao / Quiz / RMKT</span></h3>
       <div class="fcards">{fcards}</div>
       <h3>Desempenho por anuncio <span class="hnote">CPA real = Investido Meta / Vendas Hubla (utm_content)</span></h3>
-      {ads_table(t['top_ads'], thumbs, status)}
+      {ads_table(t['top_ads'], status)}
     </section>'''
 
 
@@ -260,6 +268,7 @@ def build():
     d = json.load(open(DATA, encoding='utf-8'))
     thumbs = d.get('thumbs_b64', {})
     status = d.get('ad_status', {})
+    media = d.get('media_links', {})
     turmas = d['turmas']
 
     # tabs
@@ -270,7 +279,19 @@ def build():
 
     panels = [overview_panel(d['overview'], d['month_label'])]
     for i, t in enumerate(turmas):
-        panels.append(turma_panel(t, thumbs, status, i))
+        panels.append(turma_panel(t, status, i))
+
+    # mapas JS (thumbs deduplicados + links de midia) — evita repetir base64 por turma
+    thumbs = {k: v for k, v in thumbs.items() if v}
+    media = {k: v for k, v in media.items() if k in thumbs and (v.get('ig') or v.get('fb'))}
+    data_js = ('var THUMBS=' + json.dumps(thumbs, ensure_ascii=False) + ';'
+               'var MEDIA=' + json.dumps(media, ensure_ascii=False) + ';')
+    lightbox = ('<div id="lb" class="lb"><div class="lb-box">'
+                '<img id="lb-img" alt=""><div class="lb-bar">'
+                '<span id="lb-code"></span>'
+                '<a id="lb-ig" target="_blank" rel="noopener" style="display:none">ver no Instagram</a>'
+                '<a id="lb-fb" target="_blank" rel="noopener" style="display:none">abrir preview (Meta)</a>'
+                '<span class="lb-x" id="lb-x">fechar</span></div></div></div>')
 
     css = CSS
     js = JS
@@ -288,6 +309,8 @@ def build():
 </header>
 <main>{''.join(panels)}</main>
 <footer>DP100K-Fp02 · fonte: Investimento por Hora (spend/funil, hora-exato) + Hubla (venda) + Pesquisa (renda) · Meta Ads act {esc(d['account'])} · Rio de Janeiro / BR</footer>
+{lightbox}
+<script>{data_js}</script>
 <script>{js}</script>
 </body></html>'''
     with open(OUT, 'w', encoding='utf-8') as f:
@@ -373,8 +396,28 @@ tr.cur{background:#1d2740}
 .fbtn{background:var(--card);color:var(--mut);border:1px solid var(--line);border-radius:20px;padding:4px 12px;font-size:12px;cursor:pointer}
 .fbtn.active{background:var(--acc);color:#fff;border-color:var(--acc)}
 .ads .adcell{display:flex;gap:10px;align-items:center;min-width:230px}
-.thumb{width:46px;height:46px;border-radius:6px;object-fit:cover;flex-shrink:0;background:var(--line)}
+.thumb{width:52px;height:52px;border-radius:6px;object-fit:cover;flex-shrink:0;background:var(--line);border:0}
+.thumb.has{cursor:zoom-in;transition:transform .1s}
+.thumb.has:hover{transform:scale(1.08);outline:2px solid var(--acc)}
 .thumb.noimg{border:1px dashed var(--line)}
+.acount{margin-left:auto;color:var(--mut);font-size:11px}
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:var(--tx)}
+th.sortable i{font-style:normal;opacity:.3;margin-left:3px}
+th.sortable i::after{content:"\\2195"}
+th.sortable.asc i{opacity:1;color:var(--acc)}
+th.sortable.asc i::after{content:"\\2191"}
+th.sortable.desc i{opacity:1;color:var(--acc)}
+th.sortable.desc i::after{content:"\\2193"}
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;z-index:100}
+.lb.open{display:flex}
+.lb-box{display:flex;flex-direction:column;align-items:center;max-width:92vw}
+#lb-img{max-width:90vw;max-height:80vh;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+.lb-bar{margin-top:14px;display:flex;gap:18px;align-items:center;color:#fff;font-size:14px}
+.lb-bar a{color:#7dd3fc;text-decoration:none;font-weight:600}
+.lb-bar a:hover{text-decoration:underline}
+.lb-x{cursor:pointer;color:#fff;opacity:.65}
+.lb-x:hover{opacity:1}
 .adcode{font-weight:700;font-size:13px}
 .fchip{font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:6px}
 .stdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:6px}
@@ -404,10 +447,54 @@ document.querySelectorAll('.afilter').forEach(function(bar){
       btn.classList.add('active');
       var f=btn.dataset.f;
       tbl.querySelectorAll('tbody tr').forEach(function(tr){
-        tr.style.display=(f==='all'||tr.dataset.funnel===f)?'':'none';});
+        tr.dataset.hidden=(f==='all'||tr.dataset.funnel===f)?'':'1';
+        tr.style.display=tr.dataset.hidden?'none':'';});
     };
   });
 });
+// ordenacao de colunas
+document.querySelectorAll('table.ads thead th.sortable').forEach(function(th){
+  th.onclick=function(){
+    var tbl=th.closest('table'), col=+th.dataset.col;
+    var wasDesc=th.classList.contains('desc');
+    tbl.querySelectorAll('thead th').forEach(function(x){x.classList.remove('asc','desc')});
+    th.classList.add(wasDesc?'asc':'desc');
+    var dir=wasDesc?1:-1;
+    var tb=tbl.querySelector('tbody');
+    var rows=Array.prototype.slice.call(tb.querySelectorAll('tr'));
+    rows.sort(function(a,b){
+      var av=parseFloat(a.children[col].dataset.v)||0;
+      var bv=parseFloat(b.children[col].dataset.v)||0;
+      return (av-bv)*dir;
+    });
+    rows.forEach(function(r){tb.appendChild(r)});
+  };
+});
+// thumbs (mapa deduplicado) + lightbox
+(function(){
+  var lb=document.getElementById('lb'), lbi=document.getElementById('lb-img'),
+      lbc=document.getElementById('lb-code'), lig=document.getElementById('lb-ig'),
+      lfb=document.getElementById('lb-fb');
+  function open(aid,src,code){
+    lbi.src=src; lbc.textContent=code||'';
+    var m=MEDIA[aid]||{};
+    lig.style.display=m.ig?'inline':'none'; if(m.ig)lig.href=m.ig;
+    lfb.style.display=m.fb?'inline':'none'; if(m.fb)lfb.href=m.fb;
+    lb.classList.add('open');
+  }
+  function close(){lb.classList.remove('open');}
+  lb.onclick=function(e){if(e.target.id==='lb'||e.target.id==='lb-x')close();};
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
+  document.querySelectorAll('img.thumb').forEach(function(img){
+    var aid=img.dataset.aid, t=THUMBS[aid];
+    if(t){img.src=t; img.classList.add('has');
+      img.onclick=function(){
+        var codeEl=img.closest('tr').querySelector('.adcode');
+        open(aid,t,codeEl?codeEl.textContent:'');
+      };
+    } else {img.classList.add('noimg');}
+  });
+})();
 '''
 
 
