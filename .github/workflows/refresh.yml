@@ -36,7 +36,9 @@ jobs:
         env:
           META_ADS_TOKEN: ${{ secrets.META_ADS_TOKEN }}
           META_APP_ID: ${{ secrets.META_APP_ID }}
-        run: python run.py
+        run: |
+          python report_v2.py
+          python build_v2.py
 
       - name: Commit if changed
         run: |
